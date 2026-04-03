@@ -67,7 +67,9 @@ def font_to_css(font_name: str, font_size: float, font_flags: int, color: int) -
             styles.append(f"color: #{r:02x}{g:02x}{b:02x}")
     return "; ".join(styles)
 
-def classify_heading(font_size: float, font_flags: int, font_name: str, avg_size: float) -> str | None:
+from typing import Optional
+
+def classify_heading(font_size: float, font_flags: int, font_name: str, avg_size: float) -> Optional[str]:
     """Map font metrics to heading levels. Returns 'h1'–'h4', 'strong', or None."""
     is_bold = bool(font_flags & (1 << 18)) or bool(font_name and "Bold" in font_name)
     if font_size >= avg_size * 2.0: return "h1"
@@ -309,12 +311,17 @@ def process_text_block(block: dict, avg_font_size: float) -> str:
     )
 
     inline_parts = []
+    prev_text = ""
     for line in lines:
         line_parts = []
+        line_text = ""
         for span in line.get("spans", []):
             text = span.get("text", "")
             if not text: continue
-            escaped = sanitize_html(text)
+            line_text += text
+            
+            clean_text = text.replace('\xad', '')
+            escaped = sanitize_html(clean_text)
             css = font_to_css(
                 span.get("font", ""), span.get("size", 12),
                 span.get("flags", 0), span.get("color", 0),
@@ -323,10 +330,23 @@ def process_text_block(block: dict, avg_font_size: float) -> str:
         
         if line_parts:
             line_html = "".join(line_parts)
-            # Ensure words from adjacent lines don't merge (e.g. "word\nword")
-            if inline_parts and not inline_parts[-1].endswith(" ") and not line_html.startswith(" "):
-                inline_parts.append(" ")
+            
+            if inline_parts:
+                prev_clean = prev_text.rstrip()
+                add_space = True
+                
+                # Prevent merging words naturally ending/starting with spaces
+                if prev_text.endswith(" ") or line_text.startswith(" "):
+                    add_space = False
+                # If the previous line ended with a hyphen (soft or hard), merge without an extra space
+                elif prev_clean.endswith('\xad') or prev_clean.endswith('-'):
+                    add_space = False
+                    
+                if add_space:
+                    inline_parts.append(" ")
+                    
             inline_parts.append(line_html)
+            prev_text = line_text
 
     if not inline_parts: return ""
     joined = "".join(inline_parts).strip()
